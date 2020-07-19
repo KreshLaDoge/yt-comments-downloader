@@ -1,3 +1,5 @@
+// Implement custom logic for restricting QPS - default is 100 queries per 100 second and max 10 queries per second
+
 const axios = require('axios');
 const fs = require('fs');
 
