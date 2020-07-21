@@ -2,19 +2,23 @@
 
 const axios = require('axios');
 const fs = require('fs');
+const rateLimit = require('axios-rate-limit');
 
-const apiKey = 'AIzaSyD2wPlulvrYbAb4SoK9nYAuWHVU0rrUJwc';
+const apiKey = 'AIzaSyBEdACltbBjeVZqHlZYBfLFPkJ5fN3M5cE';
 const channelIDs = ['UC0gOw4iy-6HwO01q-gA1B0Q'];
-const commentPagesCount = 5;
+const commentPagesCount = 2;
 let comments = [];
+
+const http = rateLimit(axios.create(), {maxRequests: 1, perMilliseconds: 1150});
 
 channelIDs.forEach(channel => {
         let uploadCollectionID;
-        axios.get(`https://www.googleapis.com/youtube/v3/channels?id=${channel}&key=${apiKey}&part=contentDetails`)
+        http.get(`https://www.googleapis.com/youtube/v3/channels?id=${channel}&key=${apiKey}&part=contentDetails`)
             .then(uploadsCollection => {
                 uploadCollectionID = uploadsCollection.data.items[0].contentDetails.relatedPlaylists.uploads;
                 if (uploadCollectionID) {
-                    axios.get(`https://www.googleapis.com/youtube/v3/playlistItems?playlistId=${uploadCollectionID}&key=${apiKey}&part=snippet&maxResults=50`)
+                    console.log('[+] Retrieved upload collection id: ' + uploadCollectionID);
+                    http.get(`https://www.googleapis.com/youtube/v3/playlistItems?playlistId=${uploadCollectionID}&key=${apiKey}&part=snippet&maxResults=50`)
                         .then(firstVideos => {
                             let currentNextPageToken = firstVideos.data.nextPageToken;
                             const totalVideos = firstVideos.data.pageInfo.totalResults;
@@ -27,7 +31,7 @@ channelIDs.forEach(channel => {
 
                             if (numberOfPages > 1) {
                                 for (let i = 1; i <= numberOfPages; i++) {
-                                    axios.get(`https://www.googleapis.com/youtube/v3/playlistItems?playlistId=${uploadCollectionID}&key=${apiKey}&part=snippet&maxResults=50&pageToken=${currentNextPageToken}`)
+                                    http.get(`https://www.googleapis.com/youtube/v3/playlistItems?playlistId=${uploadCollectionID}&key=${apiKey}&part=snippet&maxResults=50&pageToken=${currentNextPageToken}`)
                                         .then(videos => {
                                             videos.data.items.forEach(video => {
                                                 videosIDs.push(video.snippet.resourceId.videoId);
@@ -37,11 +41,13 @@ channelIDs.forEach(channel => {
                                             }
                                             if (i === numberOfPages) {
                                                 completed(videosIDs);
+                                                console.log('[+] Retrieved IDs of: ' + videosIDs.length + ' videos');
                                             }
                                         }).catch(() => console.log('Early error'));
                                 }
                             } else {
                                 completed(videosIDs);
+                                console.log('[+] Retrieved IDs of: ' + videosIDs.length + ' videos');
                             }
                         })
                 }
@@ -51,22 +57,24 @@ channelIDs.forEach(channel => {
 );
 
 function completed(videosIDs) {
-    let counter = 0;
-    console.log('Number of videos ' + videosIDs.length);
-    videosIDs.forEach(video => {
-        counter++;
-        axios.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}`)
+    videosIDs.forEach((video, index) => {
+        http.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}`)
             .then(commentsData => {
+                console.log('[+] Fetching comments for the video: ' + (+index + +1 ));
                 let currentPageToken = null;
                 if (commentsData.data.nextPageToken) {
                     currentPageToken = commentsData.data.nextPageToken;
                 }
-                commentsData.data.items.forEach(comment => {
+                commentsData.data.items.forEach((comment, index1) => {
                     comments.push(comment.snippet.topLevelComment.snippet.textDisplay);
+                    if (index + 1 === videosIDs.length && index1 === commentsData.data.items.length) {
+                        console.log('[Success] Saving comments');
+                        fileSave(comments)
+                    }
                 });
                 if (currentPageToken) {
                     for (let i = 1; i <= commentPagesCount; i++) {
-                        axios.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}&pageToken=${currentPageToken}`)
+                        http.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}&pageToken=${currentPageToken}`)
                             .then(commentsPagedData => {
                                 commentsPagedData.data.items.forEach(comment => {
                                     comments.push(comment.snippet.topLevelComment.snippet.textDisplay);
@@ -77,26 +85,21 @@ function completed(videosIDs) {
                                     currentPageToken = null;
                                 }
                             })
+                            .catch(err => {console.log('[!] Error while fetching comment page')})
                     }
                 }
             }).catch(err => console.log('Far error'));
-        if (counter === videosIDs.length) {
-            console.log('Final fetching of comments');
-            setTimeout(() => {
-                fileSave(comments)
-            }, 3000)
-        }
     })
 }
 
 function fileSave(data) {
     let file = fs.createWriteStream('comments.txt');
     file.on('error', err => {
-        console.log('[ERROR] - Script was not able to save file.')
+        console.log('[!] Script was not able to save file.')
     });
     data.forEach(v => {
         file.write(v + '\n');
     });
     file.end();
-    console.log(`${data.length} comments was saved into file`)
+    console.log(`[+++] ${data.length} comments was saved into file`)
 }
