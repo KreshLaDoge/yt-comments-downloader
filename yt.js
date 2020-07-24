@@ -6,10 +6,10 @@ const rateLimit = require('axios-rate-limit');
 
 const apiKey = 'AIzaSyBEdACltbBjeVZqHlZYBfLFPkJ5fN3M5cE';
 const channelIDs = ['UCQMhS3iDy2WD7JwXu6XniYA', 'UCwtr9zIfCyVS162bEF_s-TA', 'UC2BtzFqtduXt0txT6X_QAhA', 'UCqlZKBopA7F3aRshRs2tKlQ'];
-const commentPagesCount = 200;
-let comments = [];
+const commentPagesCount = 10000;
 
-const http = rateLimit(axios.create(), {maxRequests: 1, perMilliseconds: 1200});
+const http = rateLimit(axios.create(), {maxRequests: 1, perMilliseconds: 11000});
+let file = fs.createWriteStream('comments.txt');
 
 channelIDs.forEach(channel => {
         let uploadCollectionID;
@@ -40,13 +40,13 @@ channelIDs.forEach(channel => {
                                                 currentNextPageToken = videos.data.nextPageToken;
                                             }
                                             if (i === numberOfPages) {
-                                                completed(videosIDs);
+                                                completed(videosIDs, uploadCollectionID);
                                                 console.log('[+] Retrieved IDs of: ' + videosIDs.length + ' videos');
                                             }
                                         }).catch(() => console.log('[!!!] Error while fetching videos'));
                                 }
                             } else {
-                                completed(videosIDs);
+                                completed(videosIDs, uploadCollectionID);
                                 console.log('[+] Retrieved IDs of: ' + videosIDs.length + ' videos');
                             }
                         })
@@ -56,8 +56,9 @@ channelIDs.forEach(channel => {
     }
 );
 
-function completed(videosIDs) {
+function completed(videosIDs, collectionId) {
     videosIDs.forEach((video, index) => {
+        console.log(`[+] Video ${index} of ${videosIDs.length} (${collectionId})`);
         http.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}`)
             .then(commentsData => {
                 let currentPageToken = null;
@@ -65,41 +66,28 @@ function completed(videosIDs) {
                     currentPageToken = commentsData.data.nextPageToken;
                 }
                 commentsData.data.items.forEach((comment, index1) => {
-                    push(comment.snippet.topLevelComment.snippet.textDisplay);
+                    file.write(comment.snippet.topLevelComment.snippet.textDisplay + '\n');
                 });
                 if (currentPageToken) {
                     for (let i = 1; i <= commentPagesCount; i++) {
-                        http.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}&pageToken=${currentPageToken}`)
-                            .then(commentsPagedData => {
-                                commentsPagedData.data.items.forEach(comment => {
-                                    push(comment.snippet.topLevelComment.snippet.textDisplay);
-                                });
-                                if (commentsPagedData.data.nextPageToken) {
-                                    currentPageToken = commentsPagedData.data.nextPageToken;
-                                } else {
-                                    currentPageToken = null;
-                                }
-                            })
-                            .catch(err => {console.log('[!] Error while fetching comment page')})
+                        if (currentPageToken) {
+                            http.get(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=${video}&key=${apiKey}&pageToken=${currentPageToken}`)
+                                .then(commentsPagedData => {
+                                    commentsPagedData.data.items.forEach(comment => {
+                                        file.write(comment.snippet.topLevelComment.snippet.textDisplay + '\n');
+                                    });
+                                    if (commentsPagedData.data.nextPageToken) {
+                                        currentPageToken = commentsPagedData.data.nextPageToken;
+                                    } else {
+                                        currentPageToken = null;
+                                    }
+                                })
+                                .catch(err => {
+                                    console.log('[!] Error while fetching comment page')
+                                })
+                        }
                     }
                 }
             }).catch(err => console.log('[!!!] Error while fetching comments'));
     })
-}
-
-function push(data) {
-    comments.push(data);
-    fileSave(comments);
-}
-
-function fileSave(data) {
-    let file = fs.createWriteStream('comments.txt');
-    file.on('error', err => {
-        console.log('[!] Script was not able to save file.')
-    });
-    data.forEach(v => {
-        file.write(v + '\n');
-    });
-    file.end();
-    console.log(`[+++] Actual state is: ${data.length} comments`)
 }
